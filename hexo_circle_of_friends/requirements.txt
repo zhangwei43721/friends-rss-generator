@@ -7,7 +7,7 @@ asgiref==3.7.2
 typing-extensions==4.10.0
 
 # 异步和协程
-gevent==24.2.1
+gevent==22.10.2
 greenlet==3.0.3
 aiohttp==3.9.5
 aiofiles==23.2.1
