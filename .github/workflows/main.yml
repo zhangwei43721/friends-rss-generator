@@ -1,7 +1,8 @@
 name: update-friends-posts
+
 permissions:
-    contents: write
-    actions: write
+  contents: write
+  actions: write
 
 on:
   push:
@@ -12,27 +13,24 @@ on:
   workflow_dispatch:
 
 env:
-  # 在这里查看需要添加的secert
   # 通用配置
   SIMPLE_MODE: true # 极简模式是否开启
   STORAGE_TYPE: ${{ secrets.STORAGE_TYPE }} # 请修改为你的存储方式，默认为leancloud
   PROXY: ${{ secrets.PROXY }} # 可选，http代理
-  # leancloud、mysql、sqlite、mongodb配置四选一即可
   # leancloud配置
   APPID: ${{ secrets.APPID }}
   APPKEY: ${{ secrets.APPKEY }}
   # mysql配置
-  MYSQL_USERNAME: ${{ secrets.MYSQL_USERNAME }} # 登录用户名
-  MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }} # 登录密码
-  MYSQL_IP: ${{ secrets.MYSQL_IP }} # 数据库IP地址
-  MYSQL_PORT: ${{ secrets.MYSQL_PORT }} # 数据库端口号
-  MYSQL_DB: ${{ secrets.MYSQL_DB }} # 要连接到的库的名称
-  # sqlite配置，用于将db文件上传到github仓库
-  GITHUB_NAME: ${{ secrets.GH_NAME }} # 你的github昵称
-  GITHUB_EMAIL: ${{ secrets.GH_EMAIL }} # 你的github邮箱
-  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }} # github token
+  MYSQL_USERNAME: ${{ secrets.MYSQL_USERNAME }}
+  MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+  MYSQL_IP: ${{ secrets.MYSQL_IP }}
+  MYSQL_PORT: ${{ secrets.MYSQL_PORT }}
+  MYSQL_DB: ${{ secrets.MYSQL_DB }}
+  # sqlite配置
+  GITHUB_NAME: ${{ secrets.GH_NAME }}
+  GITHUB_EMAIL: ${{ secrets.GH_EMAIL }}
   # mongodb配置
-  MONGODB_URI: ${{ secrets.MONGODB_URI }}  # mongodb URI 支持'mongodb://'和'mongodb+srv://'
+  MONGODB_URI: ${{ secrets.MONGODB_URI }}
   TZ: Asia/Shanghai
 
 jobs:
@@ -41,6 +39,10 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -55,7 +57,12 @@ jobs:
       run: |
         echo "BASE_PATH=$(pwd)" >> $GITHUB_ENV && echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
 
-    - name: leancloud Update posts # leancloud
+    - name: Configure Git
+      run: |
+        git config --global user.name "${{ env.GITHUB_NAME || 'github-actions[bot]' }}"
+        git config --global user.email "${{ env.GITHUB_EMAIL || 'github-actions[bot]@noreply.github.com' }}"
+
+    - name: leancloud Update posts
       if: ${{ env.STORAGE_TYPE == 'leancloud' }}
       env:
         APPID: ${{ secrets.APPID }}
@@ -66,7 +73,7 @@ jobs:
       run: |
         python run.py
 
-    - name: mysql Update posts # mysql
+    - name: mysql Update posts
       if: ${{ env.STORAGE_TYPE == 'mysql' }}
       env:
         MYSQL_USERNAME: ${{ secrets.MYSQL_USERNAME }}
@@ -77,7 +84,7 @@ jobs:
       run: |
         python run.py
 
-    - name: sqlite Update posts # sqlite
+    - name: sqlite Update posts
       if: ${{ env.STORAGE_TYPE == 'sqlite' || env.SIMPLE_MODE == 'true' }}
       env:
         PYTHONPATH: ${{ env.PYTHONPATH }}
@@ -85,18 +92,16 @@ jobs:
       run: |
         python ./hexo_circle_of_friends/run.py
 
-    - name: Push sqlite data # sqlite push
+    - name: Push sqlite data
       if: ${{ env.STORAGE_TYPE == 'sqlite' }}
-      uses: github-actions-x/commit@v2.9
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        commit-message: "Update data.db"
-        files: data.db
-        rebase: 'true'
-        name: ${{ env.GITHUB_NAME }}
-        email: ${{ env.GITHUB_EMAIL }}
+      run: |
+        if [ -f "data.db" ]; then
+          git add data.db
+          git commit -m "Update data.db" || echo "No changes to commit"
+          git push origin main || echo "Nothing to push"
+        fi
 
-    - name: mongodb Update posts # mongodb
+    - name: mongodb Update posts
       if: ${{ env.STORAGE_TYPE == 'mongodb' }}
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
@@ -104,21 +109,34 @@ jobs:
       run: |
         python run.py
 
-    - name: simple mode transform # 极简模式转换
+    - name: simple mode transform
       if: ${{ env.SIMPLE_MODE == 'true' }}
       run: |
         python ./hexo_circle_of_friends/utils/simple_mode_transform_json.py
 
-    - name: simple mode push # 推送极简模式
+    - name: simple mode push
       if: ${{ env.SIMPLE_MODE == 'true' }}
-      uses: github-actions-x/commit@v2.9
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        push-branch: 'output'
-        force-push: 'true'
-        commit-message: 'Generate Json'
-        name: github-actions[bot]
-        email: github-actions[bot]@noreply.github.com
+      run: |
+        # 创建或切换到 output 分支
+        git fetch origin output || true
+        git checkout -B output
 
-    - name: keep alive
-      uses: gautamkrishnar/keepalive-workflow@master # keep workflows from being suspended when no commit for a long time
+        # 添加生成的 JSON 文件
+        git add -A
+        git commit -m "Generate Json" || echo "No changes to commit"
+
+        # 强制推送到 output 分支
+        git push origin output --force
+
+    - name: Keep workflow alive
+      if: github.event_name == 'schedule'
+      run: |
+        # 每30天创建一次空提交以保持工作流活跃
+        last_commit_date=$(git log -1 --format=%ct)
+        current_date=$(date +%s)
+        days_since_last_commit=$(( (current_date - last_commit_date) / 86400 ))
+
+        if [ $days_since_last_commit -gt 30 ]; then
+          git commit --allow-empty -m "Keep workflow alive"
+          git push origin main
+        fi
