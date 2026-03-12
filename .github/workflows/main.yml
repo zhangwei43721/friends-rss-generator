@@ -1,4 +1,7 @@
 name: update-friends-posts
+permissions:
+    contents: write
+    actions: write
 
 on:
   push:
